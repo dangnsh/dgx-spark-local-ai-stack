@@ -1,12 +1,41 @@
 # Two DGX Sparks, one always-on local AI stack
 
-I run a personal AI assistant on two NVIDIA DGX Sparks at home. Not a demo that
-runs a chatbot when someone's watching: it handles email triage, family
-calendars, reminders, church bulletins, image generation, and it's supposed to
-survive its own bugs without me. This post is how the whole thing is wired:
-tensor parallel across the two nodes, long-term memory, self-healing watchdogs,
-a nightly "dream" job, and the single-node mode I use when I want the second
-box back for something else.
+I run [Hermes Agent](https://hermes-agent.nousresearch.com) as the brain of a
+personal assistant on two NVIDIA DGX Sparks at home. Not a demo that runs a
+chatbot when someone's watching: the agent answers on Telegram and WhatsApp,
+handles email triage, family calendars, reminders, church bulletins, and image
+generation, and it's supposed to survive its own bugs without me. The Sparks
+exist to serve it the model. This post is how the whole thing is wired: the
+agent layer, tensor parallel across the two nodes, long-term memory,
+self-healing watchdogs, a nightly "dream" job, and the single-node mode I use
+when I want the second box back for something else.
+
+## The agent layer (Hermes)
+
+Everything I describe below is infrastructure in service of one process: a
+Hermes gateway on spark1, which is also the box the agent itself lives on
+(interesting consequences, see the lessons). The piece that makes the local
+model usable day-to-day is how Hermes treats model endpoints: the serving URL
+is just a provider entry in a config file, read fresh every turn, with an
+ordered fallback chain behind it. TP2 engine, single-node engine, a 27B model
+on one box, a cloud endpoint, in that order. So the infrastructure below can
+die in almost any configuration and the agent degrades instead of going dark.
+When I cut over engines I don't touch the agent at all; same served model name,
+config untouched.
+
+On top of that the agent schedules its own life. Hermes ships a cron scheduler
+that re-reads its job file every tick, so schedule edits land live without
+restarting anything. Morning briefings, email triage, credit-card due-date
+reminders, school-test reminders for the kids, a weekly self-update that knows
+to re-verify the stack after itself, and the nightly dream (below) are all just
+jobs in that scheduler. The interesting part isn't the cron syntax, it's that
+each job runs as a full agent turn with tool access: the "update" job is an
+agent that updates the system and then checks its own work like an on-call
+engineer would. The gateway serves five agent profiles over one process (this
+one handles family and infra; separate ones handle code, media, and church
+stuff, each with their own skills and memory), and messages route by platform:
+my family talks to the assistant on WhatsApp, I talk to it on Telegram, and it
+all lands on this box.
 
 ## The hardware
 
